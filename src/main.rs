@@ -1,12 +1,15 @@
 use std::fs::{self, File, remove_dir_all};
-use std::io;
+use std::io::{self, BufReader, BufWriter, Error, ErrorKind, Result};
 use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 
+use age::{Encryptor, x25519};
 use chrono::Local;
 use tar::Builder;
 use walkdir::WalkDir;
 
 static BACKUP_FOLDER_PATH: &str = "laptop-backup";
+static PUBLIC_ENCRYPTION_KEY: &str = "REDACTED";
 
 fn main() {
     let paths: Vec<&str> = vec![
@@ -15,29 +18,34 @@ fn main() {
         "/home/matty/Downloads/test/",
     ];
 
-    for path in &paths {
+    for path in paths {
         if let Err(err) = backup_files_from_folder(path) {
             eprintln!("{:?}", err);
         }
     }
 
-    zip_files_in_folder(BACKUP_FOLDER_PATH);
+    let archive_file = zip_files_in_folder(BACKUP_FOLDER_PATH);
+
+    if let Err(e) = encrypt_file(archive_file.unwrap(), PUBLIC_ENCRYPTION_KEY.into()) {
+        eprintln!("Encryption failed: {e}");
+        std::process::exit(1);
+    }
 }
 
-pub fn backup_files_from_folder<T: AsRef<Path>>(source_path: T) -> io::Result<()> {
+pub fn backup_files_from_folder<T: AsRef<Path>>(source_path: T) -> Result<()> {
     let source_path: PathBuf = PathBuf::from(source_path.as_ref());
     let backup_folder_path: PathBuf = PathBuf::from(BACKUP_FOLDER_PATH);
 
     if !source_path.is_absolute() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(Error::new(
+            ErrorKind::Other,
             format!("source path '{}' is not absolute", source_path.display()),
         ));
     }
 
     if !source_path.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(Error::new(
+            ErrorKind::Other,
             format!("source path '{}' is not a directory", source_path.display()),
         ));
     }
@@ -60,7 +68,7 @@ pub fn backup_files_from_folder<T: AsRef<Path>>(source_path: T) -> io::Result<()
     return Ok(());
 }
 
-fn copy_file_from_folder(file: PathBuf, destination_folder: &PathBuf) -> io::Result<()> {
+fn copy_file_from_folder(file: PathBuf, destination_folder: &PathBuf) -> Result<()> {
     if file.is_dir() {
         return backup_folder(file); // The "file" it is actually a folder in this context.
     }
@@ -94,10 +102,10 @@ fn copy_file_from_folder(file: PathBuf, destination_folder: &PathBuf) -> io::Res
     return Ok(());
 }
 
-fn backup_folder(folder: PathBuf) -> io::Result<()> {
+fn backup_folder(folder: PathBuf) -> Result<()> {
     if !folder.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(Error::new(
+            ErrorKind::Other,
             format!("source path '{}' is not a directory", folder.display()),
         ));
     }
@@ -137,7 +145,7 @@ fn create_folder_in_backup_structure<T: AsRef<Path>>(source_path_folder: T) -> i
     return Ok(full_backup_folder_path);
 }
 
-pub fn zip_files_in_folder(folder_path: &str) {
+pub fn zip_files_in_folder(folder_path: &str) -> io::Result<PathBuf> {
     let folder = Path::new(folder_path);
     let now = Local::now();
 
@@ -151,28 +159,54 @@ pub fn zip_files_in_folder(folder_path: &str) {
                 "Failed to create the archive file named {}: {}",
                 filename, err
             );
-            return;
+            return Err(err);
         }
     };
 
     let mut archive: Builder<File> = Builder::new(tar_file);
-
-    println!("Archiving everything in the folder {}", folder_path);
 
     if let Err(err) = archive.append_dir_all(folder_path, folder_path) {
         eprintln!(
             "Failed to append directory {} to archive: {}",
             folder_path, err
         );
-        return;
+        return Err(err);
     }
 
     if let Err(err) = archive.finish() {
         eprintln!("Failed to finish archive {}: {}", filename, err);
-        return;
+        return Err(err);
     }
 
     if let Err(err) = remove_dir_all(folder_path) {
         println!("Failed to remove backup folder {}: {}", folder_path, err);
     }
+
+    return Ok(PathBuf::from(filename));
+}
+
+pub fn encrypt_file<P: AsRef<Path>>(input_file: P, public_key: &str) -> Result<()> {
+    let output_filename: PathBuf = input_file.as_ref().with_extension("tar.age");
+
+    let recipient = x25519::Recipient::from_str(&public_key).map_err(|e| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            format!("invalid age recipient \"{public_key}\": {e}"),
+        )
+    })?;
+
+    let encryptor = Encryptor::with_recipients(std::iter::once(&recipient as &dyn age::Recipient))
+        .expect("recipient iterator is non-empty");
+
+    let mut input_file: BufReader<File> = BufReader::new(File::open(input_file)?);
+    let output_file: BufWriter<File> = BufWriter::new(File::create(output_filename)?);
+
+    let mut encrypted_output_file: age::stream::StreamWriter<BufWriter<File>> = encryptor
+        .wrap_output(output_file)
+        .map_err(|err| Error::new(ErrorKind::Other, err.to_string()))?;
+
+    io::copy(&mut input_file, &mut encrypted_output_file)?;
+    encrypted_output_file.finish()?;
+
+    return Ok(());
 }
