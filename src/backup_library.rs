@@ -130,26 +130,29 @@ fn copy_file_from_folder(
         return backup_folder(file, backup_folder_path); // The "file" it is actually a folder in this context.
     }
 
-    // Skip non-regular files (symlinks, etc.)
     if !file.is_file() {
         println!(
-            "Skipping non-regular file '{}': not a regular file",
+            "skipping non-regular file {}: not a regular file",
             file.display()
         );
         return Ok(());
     }
+
     let mut file_destination: PathBuf = destination_folder.to_path_buf();
 
     if let Some(file_name) = file.file_name() {
         file_destination.push(file_name);
     } else {
-        eprintln!("Skipping '{}': path has no final component", file.display());
+        println!(
+            "skipping file {}: path has no final component",
+            file.display()
+        );
         return Ok(());
     };
 
     if let Err(err) = fs::copy(&file, &file_destination) {
         eprintln!(
-            "Failed to copy {} → {}: {}",
+            "failed to copy file {} → {}: {}",
             file.display(),
             file_destination.display(),
             err
