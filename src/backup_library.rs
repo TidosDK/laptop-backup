@@ -9,30 +9,6 @@ use chrono::Local;
 use tar::Builder;
 use walkdir::WalkDir;
 
-pub fn load_paths_from_file(paths_file: impl AsRef<Path>) -> Result<Vec<String>> {
-    let paths_file: &Path = paths_file.as_ref();
-
-    let path_file_contents: String = fs::read_to_string(paths_file)
-        .with_context(|| format!("could not read paths from {:?}", paths_file))?;
-
-    let mut paths: Vec<String> = Vec::new();
-
-    for path in path_file_contents.lines() {
-        paths.push(path.to_string());
-    }
-
-    return Ok(paths);
-}
-
-pub fn load_public_key_from_file(public_key_file: &str) -> Result<String> {
-    let public_key_file: &Path = public_key_file.as_ref();
-
-    let public_key: String = fs::read_to_string(public_key_file)
-        .with_context(|| format!("could not read public key from {:?}", public_key_file))?;
-
-    return Ok(public_key);
-}
-
 pub fn backup_directory_contents(
     source_path: impl AsRef<Path>,
     backup_folder_path: impl AsRef<Path>,
@@ -45,22 +21,44 @@ pub fn backup_directory_contents(
     }
 
     if !source_path.is_dir() {
-        bail!("source path '{}' is not a directory", source_path.display());
+        return backup_file(source_path, backup_folder_path);
     }
 
-    let relative_source_path: PathBuf = PathBuf::from(
-        source_path
-            .strip_prefix(Component::RootDir)
-            .unwrap_or(&source_path), // unwrap_or returns the default value if the strip_prefix was not able to remove any RootDir component.
-    );
-
-    let full_backup_folder_path: PathBuf = backup_folder_path.join(relative_source_path);
+    let full_backup_folder_path: PathBuf = build_full_backup_path(source_path, backup_folder_path);
 
     fs::create_dir_all(&full_backup_folder_path)?;
 
     for entry in fs::read_dir(&source_path)? {
         copy_file_from_folder(entry?.path(), &full_backup_folder_path, backup_folder_path)?;
     }
+
+    return Ok(());
+}
+
+fn backup_file(source_path: impl AsRef<Path>, backup_folder_path: impl AsRef<Path>) -> Result<()> {
+    let source_path: &Path = source_path.as_ref();
+    let backup_folder_path: &Path = backup_folder_path.as_ref();
+
+    if !source_path.is_file() {
+        bail!("path or file '{}' does not exist", source_path.display());
+    }
+
+    let full_backup_folder_path: PathBuf = build_full_backup_path(source_path, backup_folder_path);
+
+    let Some(parent_dir) = full_backup_folder_path.parent() else {
+        bail!(
+            "internal error extracting parent from {}",
+            full_backup_folder_path.display()
+        );
+    };
+
+    fs::create_dir_all(&parent_dir)?;
+
+    copy_file_from_folder(
+        source_path.to_path_buf(),
+        &parent_dir.to_path_buf(),
+        backup_folder_path,
+    )?;
 
     return Ok(());
 }
@@ -119,6 +117,20 @@ pub fn encrypt_file<P: AsRef<Path>>(input_file_path: P, public_key: String) -> R
     remove_file(input_file_path)?;
 
     return Ok(());
+}
+
+fn build_full_backup_path(
+    source_path: impl AsRef<Path>,
+    backup_folder_path: impl AsRef<Path>,
+) -> PathBuf {
+    let source_path = source_path.as_ref();
+    let backup_folder_path = backup_folder_path.as_ref();
+
+    let relative_source_path = source_path
+        .strip_prefix(Component::RootDir)
+        .unwrap_or(source_path);
+
+    backup_folder_path.join(relative_source_path)
 }
 
 fn copy_file_from_folder(

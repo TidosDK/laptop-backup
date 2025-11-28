@@ -1,4 +1,4 @@
-# laptop-backup
+# system-backup
 
 An application that backs up selected paths on your UNIX file system.
 
@@ -27,3 +27,7 @@ age1qfvum86j3xuqw9zx7km5kyd7rp3z0r0fwaptmu8ravslf8cls7nslmaqk5
 ---
 
 After both `.txt` files have been configured, the application can run.
+
+## Missing features
+
+- Ignore specified paths in paths.txt

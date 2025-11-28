@@ -1,13 +1,14 @@
 mod backup_library;
+mod config_handler;
 
-use crate::backup_library::{
-    backup_directory_contents, encrypt_file, load_paths_from_file, load_public_key_from_file,
-    zip_files_in_folder,
+use crate::{
+    backup_library::{backup_directory_contents, encrypt_file, zip_files_in_folder},
+    config_handler::{load_paths_from_file, load_public_key_from_file},
 };
 
 static PATHS_FILE: &str = "paths.txt";
 static PUBLIC_KEY_FILE: &str = "public_key.txt";
-static BACKUP_FOLDER_PATH: &str = "laptop-backup";
+static BACKUP_FOLDER_PATH: &str = "system-backup";
 
 fn main() {
     let paths: Vec<String> = load_paths_from_file(PATHS_FILE).expect("failed to load path file");
